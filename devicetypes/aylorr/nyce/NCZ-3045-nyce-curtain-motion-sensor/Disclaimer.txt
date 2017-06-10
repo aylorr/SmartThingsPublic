@@ -1,0 +1,4 @@
+This Device Handler code is only tested by NYCe Sensors Inc. internally.
+It is not certified by Samsung SmartThings.
+
+User has to take full responsibility for any device malfunction.
