@@ -1,5 +1,5 @@
 /**
- *  Vision Shock Sensor v1.1
+ *  Vision Shock Sensor v1.2.1
  *  (ZS 5101)
  *
  *  Author: 
@@ -8,6 +8,12 @@
  *  URL to documentation: https://community.smartthings.com/t/release-vision-shock-sensor-zs-5101/81628?u=krlaframboise
  *    
  *  Changelog:
+ *
+ *    1.2.1 (08/31/2017)
+ *    	- Using Notification Report to detect activity is unreliable in the Monoprice version so switched to BasicSet.
+ *
+ *    1.2 (07/23/2017)
+ *    	- Fixed potential issue with secure version.
  *
  *    1.1 (05/23/2017)
  *    	- Added support for the Monoprice Shock Sensor
@@ -55,12 +61,8 @@ metadata {
 		attribute "secondaryStatus", "enum", ["open", "closed", "active", "inactive", "wet", "dry", "detected", "clear", ""]
 		
 		fingerprint mfr:"0109", prod:"2003", deviceJoinName:"Vision Shock Sensor"
-		
-		fingerprint deviceId: "0x2001", inClusters: "0x30, 0x71, 0x72, 0x80, 0x84, 0x85, 0x86"
-		
+				
 		fingerprint mfr:"0109", prod:"2003", model:"0307", deviceJoinName:"Monoprice Shock Sensor"
-		
-		fingerprint deviceId: "0x0701", inClusters: "0x5E, 0x80, 0x72, 0x86, 0x22, 0x85, 0x59, 0x5A, 0x7A, 0x71, 0x73, 0x84"		
 	}
 	
 	simulator { }
@@ -106,7 +108,7 @@ metadata {
 				attributeState "aActive", 
 					label:'ACTIVE', 
 					icon:"st.motion.acceleration.active", 
-					backgroundColor:"#53a7c0"				
+					backgroundColor:"#00a0dc"
 				attributeState "mInactive", 
 					label:'NO MOTION', 
 					icon:"st.motion.motion.inactive", 
@@ -114,7 +116,7 @@ metadata {
 				attributeState "mActive", 
 					label:'MOTION', 
 					icon:"st.motion.motion.active", 
-					backgroundColor:"#53a7c0"
+					backgroundColor:"#00a0dc"
 			}
 			tileAttribute ("device.secondaryStatus", key: "SECONDARY_CONTROL") {
 				attributeState "", label:''
@@ -220,25 +222,14 @@ def parse(String description) {
 	if (!isDuplicateCommand(state.lastCheckin, 30000)) {
 		state.lastCheckin = new Date().time
 		sendEvent(name: "lastCheckin", value: convertToLocalTimeString(new Date()), displayed: false, isStateChange: true)
-	}
-	
-	if (description.startsWith("Err 106")) {
-		log.warn "Secure Inclusion Failed: ${description}"
-		result << createEvent( name: "secureInclusion", value: "failed", eventType: "ALERT", descriptionText: "This sensor failed to complete the network security key exchange. If you are unable to control it via SmartThings, you must remove it from your network and add it again.")
-	}
-	else if (description.startsWith("Err")) {
-		log.warn "Parse Error: $description"
-		result << createEvent(descriptionText: "$device.displayName $description", isStateChange: true)
+	}	
+	def cmd = zwave.parse(description, commandClassVersions)
+	if (cmd) {
+		result += zwaveEvent(cmd)
 	}
 	else {
-		def cmd = zwave.parse(description, commandClassVersions)
-		if (cmd) {
-			result += zwaveEvent(cmd)
-		}
-		else {
-			logDebug "Unable to parse description: $description"
-		}
-	}	
+		logDebug "Unable to parse description: $description"
+	}		
 	return result
 }
 
@@ -274,16 +265,6 @@ private getCommandClassVersions() {
 		0x86: 1,  // Version (v2)
 		0x98: 1   // Security (Model 0308)
 	]
-}
-
-private getVersionSafeCmdClass(cmdClass) {
-	def version = commandClassVersions[safeToInt(cmdClass)]
-	if (version) {
-		return zwave.commandClass(cmdClass, version)
-	}
-	else {
-		return zwave.commandClass(cmdClass)
-	}
 }
 
 // Updates devices configuration, if needed, and creates the event with the last lastcheckin event.
@@ -335,7 +316,11 @@ def zwaveEvent(physicalgraph.zwave.commands.batteryv1.BatteryReport cmd) {
 
 def zwaveEvent(physicalgraph.zwave.commands.basicv1.BasicSet cmd) {
 	// logTrace "Basic Set: $cmd"	
-	return []
+	def result = []
+	createPrimaryEventMaps(cmd.value == 0XFF)?. each {
+		result << createEvent(it)
+	}	
+	return result
 }
 
 def zwaveEvent(physicalgraph.zwave.commands.sensorbinaryv2.SensorBinaryReport cmd) {
@@ -351,21 +336,23 @@ def zwaveEvent(physicalgraph.zwave.Command cmd) {
 
 // Contact event is being created using Sensor Binarry command class so this event is ignored.
 def zwaveEvent(physicalgraph.zwave.commands.notificationv3.NotificationReport cmd) {
-	// logTrace "NotificationReport: $cmd"
-		
+	// logTrace "NotificationReport: $cmd"		
 	def result = []
 	if (cmd.notificationType == 7) {
 		if (cmd.event == 2 || cmd.v1AlarmType == 2) {
-			createPrimaryEventMaps(cmd.v1AlarmLevel == 0XFF)?. each {
-				result << createEvent(it)
-			}
+			// createPrimaryEventMaps(cmd.v1AlarmLevel == 0XFF)?. each {
+				// result << createEvent(it)
+			// }			
 		}
 		else if (cmd.event == 3) {
 			createSecondaryEventMaps(true)?.each {
 				result << createEvent(it)
 			}
 		}
-		result << createEvent(createLastActivityEventMap())
+		if (!isDuplicateCommand(state.lastActivity, 5000)) {
+			state.lastActivity = new Date().time
+			result << createEvent(createLastActivityEventMap())
+		}
 	}	
 	return result
 }
@@ -450,18 +437,12 @@ private batteryGetCmd() {
 }
 
 private secureCmd(cmd) {
-	logTrace "canSecureCmd(${cmd}) = ${canSecureCmd(cmd)}"
-	if (canSecureCmd(cmd)) {
+	if (zwaveInfo?.zw?.contains("s") || ("0x98" in device.rawDescription?.split(" "))) {
 		return zwave.securityV1.securityMessageEncapsulation().encapsulate(cmd).format()
 	}
 	else {
 		return cmd.format()
 	}	
-}
-
-private canSecureCmd(cmd) {
-	// This code was extracted from example by @ClassicGOD	
-	return zwaveInfo?.zw?.contains("s") && zwaveInfo?.sec?.contains(Integer.toHexString(cmd.commandClassId)?.toUpperCase())
 }
 
 // Settings

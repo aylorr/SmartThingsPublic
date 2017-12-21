@@ -37,6 +37,7 @@ metadata {
         
         command "reset"
 
+        fingerprint mfr: "0159", prod: "0001", model: "0051"
 		fingerprint deviceId: "0x1101", inClusters: "0x5E,0x86,0x72,0x5A,0x73,0x20,0x27,0x25,0x26,0x32,0x85,0x8E,0x59,0x70", outClusters: "0x20,0x26"
         fingerprint deviceId: "0x1101", inClusters: "0x5E,0x86,0x72,0x5A,0x73,0x20,0x27,0x25,0x26,0x30,0x32,0x60,0x85,0x8E,0x59,0x70", outClusters: "0x20,0x26"
         
@@ -201,8 +202,17 @@ def zwaveEvent(physicalgraph.zwave.commands.manufacturerspecificv2.ManufacturerS
 }
 
 def zwaveEvent(physicalgraph.zwave.commands.associationv2.AssociationReport cmd) {
-	logging("AssociationReport $cmd", 2)
-    state."association${cmd.groupingIdentifier}" = cmd.nodeId[0]
+	log.debug "AssociationReport $cmd"
+    if (zwaveHubNodeId in cmd.nodeId) state."association${cmd.groupingIdentifier}" = true
+    else state."association${cmd.groupingIdentifier}" = false
+}
+
+def zwaveEvent(physicalgraph.zwave.commands.multichannelassociationv2.MultiChannelAssociationReport cmd) {
+	log.debug "MultiChannelAssociationReport $cmd"
+    if (cmd.groupingIdentifier == 1) {
+        if ([0,zwaveHubNodeId,1] == cmd.nodeId) state."associationMC${cmd.groupingIdentifier}" = true
+        else state."associationMC${cmd.groupingIdentifier}" = false
+    }
 }
 
 def zwaveEvent(physicalgraph.zwave.commands.sensorbinaryv2.SensorBinaryReport cmd) {
@@ -212,8 +222,7 @@ def zwaveEvent(physicalgraph.zwave.commands.sensorbinaryv2.SensorBinaryReport cm
 def zwaveEvent(physicalgraph.zwave.commands.notificationv3.NotificationReport cmd) {
     logging("NotificationReport: $cmd", 2)
     def result
-	
-	
+
 	if (cmd.notificationType == 2) {
     def children = childDevices
 	def childDevice = children.find{it.deviceNetworkId.endsWith("-i2")}
@@ -495,15 +504,21 @@ def update_needed_settings()
     def configuration = parseXml(configuration_model())
     def isUpdateNeeded = "NO"
     
-    if(!state.association9 || state.association9 == "" || state.association9 != 1){
-       logging("Setting association group 9", 1)
-       cmds << zwave.associationV2.associationSet(groupingIdentifier:9, nodeId:zwaveHubNodeId)
-       cmds << zwave.associationV2.associationGet(groupingIdentifier:9)
+    if(!state.associationMC1) {
+       logging("Adding MultiChannel association group 1")
+       cmds << zwave.associationV2.associationRemove(groupingIdentifier: 1, nodeId: [])
+       cmds << zwave.multiChannelAssociationV2.multiChannelAssociationSet(groupingIdentifier: 1, nodeId: [0,zwaveHubNodeId,1])
+       cmds << zwave.multiChannelAssociationV2.multiChannelAssociationGet(groupingIdentifier: 1)
     }
-    if(!state.association6 || state.association6 == "" || state.association6 != 1){
-       logging("Setting association group 6", 1)
-       cmds << zwave.associationV2.associationSet(groupingIdentifier:6, nodeId:zwaveHubNodeId)
+    if(state.association6){
+       logging("Removing association group 6")
+       cmds << zwave.associationV2.associationRemove(groupingIdentifier:6, nodeId:zwaveHubNodeId)
        cmds << zwave.associationV2.associationGet(groupingIdentifier:6)
+    }
+    if(state.association9){
+       logging("Removing association group 9")
+       cmds << zwave.associationV2.associationRemove(groupingIdentifier:9, nodeId:zwaveHubNodeId)
+       cmds << zwave.associationV2.associationGet(groupingIdentifier:9)
     }
 
     configuration.Value.each
@@ -524,8 +539,8 @@ def update_needed_settings()
             else if ((settings."${it.@index}" != null || "${it.@hidden}" == "true") && cmd2Integer(currentProperties."${it.@index}") != convertParam(it.@index.toInteger(), "${it.@hidden}" != "true"? settings."${it.@index}" : "${it.@value}"))
             { 
                 isUpdateNeeded = "YES"
-                logging("Parameter ${it.@index} will be updated to " + convertParam(it.@index.toInteger(), settings."${it.@index}"? settings."${it.@index}" : "${it.@value}"), 2)
-                def convertedConfigurationValue = convertParam(it.@index.toInteger(), settings."${it.@index}"? settings."${it.@index}" : "${it.@value}")
+                logging("Parameter ${it.@index} will be updated to " + convertParam(it.@index.toInteger(), "${it.@hidden}" != "true"? settings."${it.@index}" : "${it.@value}"), 2)
+                def convertedConfigurationValue = convertParam(it.@index.toInteger(), "${it.@hidden}" != "true"? settings."${it.@index}" : "${it.@value}")
                 cmds << zwave.configurationV1.configurationSet(configurationValue: integer2Cmd(convertedConfigurationValue, it.@byteSize.toInteger()), parameterNumber: it.@index.toInteger(), size: it.@byteSize.toInteger())
                 cmds << zwave.configurationV1.configurationGet(parameterNumber: it.@index.toInteger())
             } 

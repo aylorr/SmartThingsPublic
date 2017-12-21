@@ -14,6 +14,9 @@
  *
  *  Author: Eric Maycock (erocm123)
  *  Date: 2016-11-12
+ *
+ *  2017-10-20: Removed parameter 26 "Power Source" as this seems to be read only. 
+ *
  */
  
 metadata {
@@ -50,7 +53,7 @@ metadata {
         attribute "currentfanMode", "string"
         attribute "needUpdate", "string"
         
-        fingerprint deviceId: "0x0806", inClusters: "0x5E,0x85,0x20,0x80,0x81,0x70,0x7A,0x64,0x6D,0x6E,0x72,0x31,0x44,0x45,0x40,0x42,0x43,0x86"
+        fingerprint mfr: "0190", prod: "0001", model: "0001"
 	}
 
 	tiles(scale: 2) {
@@ -59,9 +62,8 @@ metadata {
     				attributeState("default", label:'${currentValue}°')
   			}
   			tileAttribute("device.temperature", key: "VALUE_CONTROL") {
-                    attributeState("VALUE_UP", action: "tempUp")
-                    attributeState("VALUE_DOWN", action: "tempDown")
-            }
+    				attributeState("default", action: "setTemperature")
+  			}
   			tileAttribute("device.humidity", key: "SECONDARY_CONTROL") {
     				attributeState("default", label:'${currentValue}%', unit:"%")
   			}
@@ -515,14 +517,14 @@ def heatLevelDown(){
 }
 
 def quickSetHeat(degrees) {
-	setHeatingSetpoint(degrees, 500)
+	setHeatingSetpoint(degrees, 2000)
 }
 
-def setHeatingSetpoint(degrees, delay = 500) {
+def setHeatingSetpoint(degrees, delay = 2000) {
 	setHeatingSetpoint(degrees.toDouble(), delay)
 }
 
-def setHeatingSetpoint(Double degrees, Integer delay = 500) {
+def setHeatingSetpoint(Double degrees, Integer delay = 2000) {
 	log.trace "setHeatingSetpoint($degrees, $delay)"
 	def deviceScale = state.scale ?: 1
 	def deviceScaleString = deviceScale == 2 ? "C" : "F"
@@ -537,6 +539,7 @@ def setHeatingSetpoint(Double degrees, Integer delay = 500) {
     	convertedDegrees = degrees
     }
     state.heat = convertedDegrees
+    sendEvent(name:"heatingSetpoint", value: convertedDegrees)
     if (device.currentValue("thermostatMode") == null || device.currentValue("thermostatMode") == "heat") { 
 		commands([
 			zwave.thermostatSetpointV1.thermostatSetpointSet(setpointType: 1, scale: deviceScale, precision: p, scaledValue: convertedDegrees),
@@ -566,14 +569,15 @@ def coolLevelDown(){
 }
 
 def quickSetCool(degrees) {
-	setCoolingSetpoint(degrees, 500)
+	setCoolingSetpoint(degrees, 2000)
 }
 
-def setCoolingSetpoint(degrees, delay = 500) {
+def setCoolingSetpoint(degrees, delay = 2000) {
 	setCoolingSetpoint(degrees.toDouble(), delay)
 }
 
-def setCoolingSetpoint(Double degrees, Integer delay = 500) {
+def setCoolingSetpoint(Double degrees, Integer delay = 2000) {
+    log.trace "setCoolingSetpoint($degrees, $delay)"
 	def deviceScale = state.scale ?: 1
 	def deviceScaleString = deviceScale == 2 ? "C" : "F"
     def locationScale = getTemperatureScale()
@@ -587,6 +591,7 @@ def setCoolingSetpoint(Double degrees, Integer delay = 500) {
     	convertedDegrees = degrees
     }
     state.cool = convertedDegrees
+    sendEvent(name:"coolingSetpoint", value: convertedDegrees)
     if (device.currentValue("thermostatMode") == null || device.currentValue("thermostatMode") == "cool") { 
 		commands([
 			zwave.thermostatSetpointV1.thermostatSetpointSet(setpointType: 2, scale: deviceScale, precision: p,  scaledValue: convertedDegrees),
@@ -707,7 +712,7 @@ def refresh() {
 		zwave.thermostatFanModeV3.thermostatFanModeGet(),
 		zwave.thermostatOperatingStateV1.thermostatOperatingStateGet(),
         zwave.batteryV1.batteryGet(),
-	], 2000)      
+	], 2000)
 }
 
 def ping() {
@@ -715,7 +720,7 @@ def ping() {
 	return commands(zwave.sensorMultilevelV3.sensorMultilevelGet())
 }
 
-private commands(commands, delay=1000) {
+private commands(commands, delay=2000) {
 	delayBetween(commands.collect{ command(it) }, delay)
 }
 
@@ -802,6 +807,12 @@ def setTemperature(value) {
                 (value < curTemp) ? (newCTemp = getCoolTemp().toInteger() - 1) : (newCTemp = getCoolTemp().toInteger() + 1)
                 setCoolingSetpoint(newCTemp.toInteger())
             }
+        	
+            /*def cmds = []
+            cmds << setHeatingSetpoint(newHTemp.toInteger())
+            cmds << "delay 1000"
+            cmds << setCoolingSetpoint(newCTemp.toInteger())
+            return cmds*/
         	break;
         default:
         	break;
@@ -962,7 +973,7 @@ Default: 1 (Electric)
     <Item label="Fossil Fuel" value="0" />
     <Item label="Electric" value="1" />
 </Value>
-<Value type="byte" byteSize="4" index="5" label="Calibration Temperature" min="-100" max="100" value="0" setting_type="zwave" fw="" disabled="true">
+<Value type="byte" byteSize="4" index="5" label="Calibration Temperature" min="-100" max="100" value="0" setting_type="zwave" fw="" disabled="false">
  <Help>
 Calibration Temperature Range (in deg. F) Precision is tenths of a degree.
 Range: -100 to 100
@@ -1121,7 +1132,7 @@ Default: 0 (Disabled)
     <Item label="H" value="2" />
     <Item label="DH" value="3" />
 </Value>
-<Value type="list" byteSize="1" index="26" label="Power Source" min="0" max="1" value="0" setting_type="zwave" fw="">
+<Value type="list" byteSize="1" index="26" label="Power Source" min="0" max="1" value="0" setting_type="zwave" fw="" disabled="true">
  <Help>
 Range: 0 to 1
 Default: 0 (Battery)

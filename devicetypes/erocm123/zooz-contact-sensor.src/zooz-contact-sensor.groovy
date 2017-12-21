@@ -26,6 +26,7 @@ metadata {
 		capability "Configuration"
         capability "Health Check"
 
+        fingerprint mfr: "027A", prod: "0003", model: "0082"
 		fingerprint deviceId: "0x0701", inClusters: "0x5E,0x86,0x72,0x5A,0x73,0x80,0x71,0x30,0x85,0x59,0x84,0x70"
 
 	}
@@ -139,9 +140,9 @@ def zwaveEvent(physicalgraph.zwave.commands.notificationv3.NotificationReport cm
 {
 	def result = []
 	if (cmd.notificationType == 0x06 && cmd.event == 0x16) {
-		result << sensorValueEvent(1)
+		//result << sensorValueEvent(1)
 	} else if (cmd.notificationType == 0x06 && cmd.event == 0x17) {
-		result << sensorValueEvent(0)
+		//result << sensorValueEvent(0)
 	} else if (cmd.notificationType == 0x07) {
 		if (cmd.v1AlarmType == 0x07) {  // special case for nonstandard messages from Monoprice door/window sensors
 			result << sensorValueEvent(cmd.v1AlarmLevel)

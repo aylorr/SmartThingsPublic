@@ -13,7 +13,11 @@
  *  Aeon WallMote Dual/Quad
  *
  *  Author: Eric Maycock (erocm123)
- *  Date: 2016-12-2
+ *  Date: 2017-06-19
+ *
+ *  2017-06-19: Added check to only send color change config for three wakeups. Editing preferences
+ *              and hitting "done" will reset the counter. This is an attempt to prevent freezing
+ *              caused by updating preferences.
  */
  
 metadata {
@@ -29,6 +33,8 @@ metadata {
         attribute "sequenceNumber", "number"
         attribute "numberOfButtons", "number"
         attribute "needUpdate", "string"
+        
+        fingerprint mfr: "0086", prod: "0102", model: "0082", deviceJoinName: "Aeon WallMote"
 
 		fingerprint deviceId: "0x1801", inClusters: "0x5E,0x73,0x98,0x86,0x85,0x59,0x8E,0x60,0x72,0x5A,0x84,0x5B,0x71,0x70,0x80,0x7A", outClusters: "0x25,0x26" // secure inclusion
         fingerprint deviceId: "0x1801", inClusters: "0x5E,0x85,0x59,0x8E,0x60,0x86,0x70,0x72,0x5A,0x73,0x84,0x80,0x5B,0x71,0x7A", outClusters: "0x25,0x26"
@@ -109,10 +115,10 @@ def zwaveEvent(physicalgraph.zwave.commands.centralscenev1.CentralSceneNotificat
               buttonEvent(cmd.sceneNumber, "pushed")
            break
            case 1: // released
-              //buttonEvent(cmd.sceneNumber, "held")
+              if (!settings.holdMode || settings.holdMode == "2") buttonEvent(cmd.sceneNumber, "held")
            break
            case 2: // held
-              buttonEvent(cmd.sceneNumber, "held")
+              if (settings.holdMode == "1") buttonEvent(cmd.sceneNumber, "held")
            break
            default:
               logging("Unhandled CentralSceneNotification: ${cmd}")
@@ -147,11 +153,15 @@ def zwaveEvent(physicalgraph.zwave.commands.wakeupv1.WakeUpNotification cmd)
     
     def request = update_needed_settings()
     
+    request << zwave.versionV1.versionGet()
+    
     if (!state.lastBatteryReport || (now() - state.lastBatteryReport) / 60000 >= 60 * 24)
     {
         logging("Over 24hr since last battery report. Requesting report")
         request << zwave.batteryV1.batteryGet()
     }
+    
+    state.wakeCount? (state.wakeCount = state.wakeCount + 1) : (state.wakeCount = 2)
 
     if(request != []){
        response(commands(request) + ["delay 5000", zwave.wakeUpV1.wakeUpNoMoreInformation().format()])
@@ -194,6 +204,16 @@ def zwaveEvent(physicalgraph.zwave.commands.configurationv1.ConfigurationReport 
      logging("${device.displayName} parameter '${cmd.parameterNumber}' with a byte size of '${cmd.size}' is set to '${cmd2Integer(cmd.configurationValue)}'")
 }
 
+def zwaveEvent(physicalgraph.zwave.commands.versionv1.VersionReport cmd) {
+	def fw = "${cmd.applicationVersion}.${cmd.applicationSubVersion}"
+	updateDataValue("fw", fw)
+	if (state.MSR == "003B-6341-5044") {
+		updateDataValue("ver", "${cmd.applicationVersion >> 4}.${cmd.applicationVersion & 0xF}")
+	}
+	def text = "$device.displayName: firmware version: $fw, Z-Wave version: ${cmd.zWaveProtocolVersion}.${cmd.zWaveProtocolSubVersion}"
+	createEvent(descriptionText: text, isStateChange: false)
+}
+
 def zwaveEvent(physicalgraph.zwave.Command cmd) {
 	logging("Unhandled zwaveEvent: ${cmd}")
 }
@@ -215,6 +235,7 @@ def installed() {
 def updated()
 {
     logging("updated() is being called")
+    state.wakeCount = 1
     def cmds = update_needed_settings()
     sendEvent(name: "checkInterval", value: 2 * 60 * 12 * 60 + 5 * 60, displayed: false, data: [protocol: "zwave", hubHardwareId: device.hub.hardwareID])
     sendEvent(name: "numberOfButtons", value: settings.buttons ? (settings."3" == "1" ? settings.buttons.toInteger() + 1 : settings.buttons) : (settings."3" ? 4 + 1 : 4), displayed: true)
@@ -346,9 +367,21 @@ def update_needed_settings()
             if (currentProperties."${it.@index}" == null)
             {
                if (it.@setonly == "true"){
-                  logging("Parameter ${it.@index} will be updated to " + convertParam(it.@index.toInteger(), settings."${it.@index}"? settings."${it.@index}" : "${it.@value}"))
-                  def convertedConfigurationValue = convertParam(it.@index.toInteger(), settings."${it.@index}"? settings."${it.@index}" : "${it.@value}")
-                  cmds << zwave.configurationV1.configurationSet(configurationValue: integer2Cmd(convertedConfigurationValue, it.@byteSize.toInteger()), parameterNumber: it.@index.toInteger(), size: it.@byteSize.toInteger())
+                  if (it.@index == 5) {
+                      if (state.wakeCount <= 3) {
+                          logging("Parameter ${it.@index} will be updated to " + convertParam(it.@index.toInteger(), settings."${it.@index}"? settings."${it.@index}" : "${it.@value}"))
+                          def convertedConfigurationValue = convertParam(it.@index.toInteger(), settings."${it.@index}"? settings."${it.@index}" : "${it.@value}")
+                          cmds << zwave.configurationV1.configurationSet(configurationValue: integer2Cmd(convertedConfigurationValue, it.@byteSize.toInteger()), parameterNumber: it.@index.toInteger(), size: it.@byteSize.toInteger())
+                          cmds << zwave.configurationV1.configurationGet(parameterNumber: it.@index.toInteger())
+                      } else {
+                        logging ("Parameter has already sent. Will not send again until updated() gets called")
+                    }
+                  } else {
+                      logging("Parameter ${it.@index} will be updated to " + convertParam(it.@index.toInteger(), settings."${it.@index}"? settings."${it.@index}" : "${it.@value}"))
+                      def convertedConfigurationValue = convertParam(it.@index.toInteger(), settings."${it.@index}"? settings."${it.@index}" : "${it.@value}")
+                      cmds << zwave.configurationV1.configurationSet(configurationValue: integer2Cmd(convertedConfigurationValue, it.@byteSize.toInteger()), parameterNumber: it.@index.toInteger(), size: it.@byteSize.toInteger())
+                      cmds << zwave.configurationV1.configurationGet(parameterNumber: it.@index.toInteger())
+                  }
                } else {
                   isUpdateNeeded = "YES"
                   logging("Current value of parameter ${it.@index} is unknown")
@@ -358,11 +391,22 @@ def update_needed_settings()
             else if (settings."${it.@index}" != null && cmd2Integer(currentProperties."${it.@index}") != convertParam(it.@index.toInteger(), settings."${it.@index}"))
             { 
                 isUpdateNeeded = "YES"
-
-                logging("Parameter ${it.@index} will be updated to " + convertParam(it.@index.toInteger(), settings."${it.@index}"))
-                def convertedConfigurationValue = convertParam(it.@index.toInteger(), settings."${it.@index}")
-                cmds << zwave.configurationV1.configurationSet(configurationValue: integer2Cmd(convertedConfigurationValue, it.@byteSize.toInteger()), parameterNumber: it.@index.toInteger(), size: it.@byteSize.toInteger())
-                cmds << zwave.configurationV1.configurationGet(parameterNumber: it.@index.toInteger())
+                
+                if (it.@index == 5) {
+                    if (state.wakeCount <= 3) {
+                        logging("Parameter ${it.@index} will be updated to " + convertParam(it.@index.toInteger(), settings."${it.@index}"))
+                        def convertedConfigurationValue = convertParam(it.@index.toInteger(), settings."${it.@index}")
+                        cmds << zwave.configurationV1.configurationSet(configurationValue: integer2Cmd(convertedConfigurationValue, it.@byteSize.toInteger()), parameterNumber: it.@index.toInteger(), size: it.@byteSize.toInteger())
+                        cmds << zwave.configurationV1.configurationGet(parameterNumber: it.@index.toInteger())
+                    } else {
+                        logging ("Parameter has already sent. Will not send again until updated() gets called")
+                    }
+                } else {
+                    logging("Parameter ${it.@index} will be updated to " + convertParam(it.@index.toInteger(), settings."${it.@index}"))
+                    def convertedConfigurationValue = convertParam(it.@index.toInteger(), settings."${it.@index}")
+                    cmds << zwave.configurationV1.configurationSet(configurationValue: integer2Cmd(convertedConfigurationValue, it.@byteSize.toInteger()), parameterNumber: it.@index.toInteger(), size: it.@byteSize.toInteger())
+                    cmds << zwave.configurationV1.configurationGet(parameterNumber: it.@index.toInteger())
+                }
             } 
         }
     }
@@ -508,6 +552,14 @@ Default: Blue
         <Item label="Red" value="1" />
         <Item label="Green" value="2" />
         <Item label="Blue" value="3" />
+  </Value>
+  <Value type="list" byteSize="4" index="holdMode" label="Hold Mode" min="1" max="2" value="2" setting_type="preference" fw=""> 
+    <Help>
+Multiple "held" events on botton hold? With this option, the controller will send a "held" event about every second while holding down a button. If set to No it will send a "held" event a single time when the button is released.
+Default: No
+   </Help>
+        <Item label="No" value="2" />
+        <Item label="Yes" value="1" />
   </Value>
   <Value type="boolean" index="enableDebugging" label="Enable Debug Logging?" value="true" setting_type="preference" fw="">
     <Help>

@@ -42,10 +42,12 @@
 		
         attribute   "needUpdate", "string"
         
-		fingerprint deviceId: "0x2101", inClusters: "0x5E,0x86,0x72,0x59,0x85,0x73,0x71,0x84,0x80,0x30,0x31,0x70,0x98,0x7A,0x5A" // 1.07 & 1.08 Secure
+        fingerprint deviceId: "0x2101", inClusters: "0x5E,0x86,0x72,0x59,0x85,0x73,0x71,0x84,0x80,0x30,0x31,0x70,0x98,0x7A,0x5A" // 1.07 & 1.08 Secure
         fingerprint deviceId: "0x2101", inClusters: "0x5E,0x86,0x72,0x59,0x85,0x73,0x71,0x84,0x80,0x30,0x31,0x70,0x7A,0x5A" // 1.07 & 1.08
         
         fingerprint deviceId: "0x2101", inClusters: "0x5E,0x86,0x72,0x59,0x85,0x73,0x71,0x84,0x80,0x30,0x31,0x70,0x7A", outClusters: "0x5A" // 1.06
+        
+        fingerprint mfr:"0086", prod:"0102", model:"0064", deviceJoinName: "Aeon MultiSensor 6"
 
 	}
     preferences {
@@ -57,7 +59,7 @@
 	tiles (scale: 2) {
 		multiAttributeTile(name:"main", type:"generic", width:6, height:4) {
 			tileAttribute("device.temperature", key: "PRIMARY_CONTROL") {
-            	attributeState "temperature",label:'${currentValue}°', icon:"st.motion.motion.inactive", backgroundColors:[
+            	attributeState "temperature",label:'${currentValue}°', backgroundColors:[
                 	[value: 31, color: "#153591"],
                     [value: 44, color: "#1e9cbb"],
                     [value: 59, color: "#90d2a7"],
@@ -75,17 +77,7 @@
                 state "inactive",label:'no motion',icon:"st.motion.motion.inactive",backgroundColor:"#ffffff"
                 state "active",label:'motion',icon:"st.motion.motion.active",backgroundColor:"#00a0dc"
 		}
-		valueTile("temperature","device.temperature", inactiveLabel: false, width: 2, height: 2) {
-            	state "temperature",label:'${currentValue}°',backgroundColors:[
-                	[value: 31, color: "#153591"],
-                    [value: 44, color: "#1e9cbb"],
-                    [value: 59, color: "#90d2a7"],
-					[value: 74, color: "#44b621"],
-					[value: 84, color: "#f1d801"],
-					[value: 95, color: "#d04e00"],
-					[value: 96, color: "#bc2323"]
-				]
-		}
+
 		valueTile("humidity","device.humidity", inactiveLabel: false, width: 2, height: 2) {
            	state "humidity",label:'RH ${currentValue} %'
 		}
@@ -169,7 +161,6 @@ def parse(String description)
             result << response(zwave.batteryV1.batteryGet().format())
             result << response(zwave.versionV1.versionGet().format())
             result << response(zwave.manufacturerSpecificV2.manufacturerSpecificGet().format())
-            result << response(zwave.firmwareUpdateMdV2.firmwareMdGet().format())
             result << response(configure())
         break
         default:
@@ -352,31 +343,11 @@ def zwaveEvent(physicalgraph.zwave.commands.wakeupv1.WakeUpNotification cmd)
     }
 }
 
-def zwaveEvent(physicalgraph.zwave.commands.firmwareupdatemdv2.FirmwareMdReport cmd){
-    logging("Firmware Report ${cmd.toString()}")
-    def firmwareVersion
-    switch(cmd.checksum){
-       case "35235":
-          firmwareVersion = "1.06"
-       break;
-       case "65307":
-          firmwareVersion = "1.07"
-       break;
-       case "42699":
-          firmwareVersion = "1.08"
-       break;
-       case "11942":
-          firmwareVersion = "1.06EU"
-       break;
-       case "14569":
-          firmwareVersion = "1.07EU"
-       break;
-       default:
-          firmwareVersion = cmd.checksum
-    }
+def zwaveEvent(physicalgraph.zwave.commands.versionv1.VersionReport cmd) {
+	def firmware = "${cmd.applicationVersion}.${cmd.applicationSubVersion.toString().padLeft(2,'0')}${location.getTemperatureScale() == 'C' ? 'EU':''}"
     state.needfwUpdate = "false"
-    updateDataValue("firmware", firmwareVersion.toString())
-    createEvent(name: "currentFirmware", value: firmwareVersion)
+    updateDataValue("firmware", firmware)
+    createEvent(name: "currentFirmware", value: firmware)
 }
 
 def zwaveEvent(physicalgraph.zwave.Command cmd) {
@@ -398,7 +369,7 @@ def refresh() {
                 request << zwave.configurationV1.configurationGet(parameterNumber: "${it.@index}".toInteger())
             }
         } 
-        request << zwave.firmwareUpdateMdV2.firmwareMdGet()
+        request << zwave.versionV1.versionGet()
         request << zwave.wakeUpV1.wakeUpIntervalGet()
     } else {
         request << zwave.batteryV1.batteryGet()
@@ -438,7 +409,7 @@ def configure() {
 def updated()
 {
     state.enableDebugging = settings.enableDebugging
-    sendEvent(name: "checkInterval", value: 2 * 60 * 60 + 2 * 60, displayed: false, data: [protocol: "zwave", hubHardwareId: device.hub.hardwareID])
+    sendEvent(name: "checkInterval", value: 6 * 60 * 60 + 2 * 60, displayed: false, data: [protocol: "zwave", hubHardwareId: device.hub.hardwareID])
     logging("updated() is being called")
     if(settings."101" != null && settings."101" == "240") { 
         sendEvent(name:"batteryTile", value: "USB Powered", displayed:false)
@@ -477,6 +448,7 @@ def updated()
 def resetTamperAlert() {
     sendEvent(name: "tamper", value: "clear", descriptionText: "$device.displayName tamper cleared")
     sendEvent(name: "acceleration", value: "inactive", descriptionText: "$device.displayName tamper cleared")
+    sendEvent(name: "motion", value: "inactive", descriptionText: "$device.displayName motion has stopped")
 }
 
 def convertParam(number, value) {
@@ -582,7 +554,7 @@ def update_needed_settings()
     
     if(!state.needfwUpdate || state.needfwUpdate == ""){
        logging("Requesting device firmware version")
-       cmds << zwave.firmwareUpdateMdV2.firmwareMdGet()
+       cmds << zwave.versionV1.versionGet()
     }    
 
     if(state.wakeInterval == null || state.wakeInterval != getAdjustedWake()){
@@ -983,7 +955,7 @@ Note:
 The unit of interval time is in seconds. Minimum interval time is 30 seconds when USB powered and 240 seconds (4 minutes) when battery powered.
     </Help>
   </Value>
-  <Value type="byte" byteSize="1" index="201" label="Temperature offset" min="*" max="*" value="">
+  <Value type="decimal" byteSize="1" index="201" label="Temperature offset" min="*" max="*" value="">
     <Help>
 Range: None
 Default: 0

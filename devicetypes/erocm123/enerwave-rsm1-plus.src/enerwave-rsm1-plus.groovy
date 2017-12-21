@@ -20,11 +20,7 @@ metadata {
 		capability "Sensor"
         capability "Configuration"
 
-		fingerprint inClusters: "0x25", deviceJoinName: "Z-Wave Switch"
-		fingerprint mfr:"001D", prod:"1A02", model:"0334", deviceJoinName: "Leviton Appliance Module"
-		fingerprint mfr:"0063", prod:"4F50", model:"3031", deviceJoinName: "GE Plug-in Outdoor Switch"
-		fingerprint mfr:"001D", prod:"1D04", model:"0334", deviceJoinName: "Leviton Outlet"
-		fingerprint mfr:"001D", prod:"1C02", model:"0334", deviceJoinName: "Leviton Switch"
+		fingerprint mfr: "011A", prod: "0101", model: "5605", deviceJoinName: "Enerwave RSM1-Plus"
 	}
 
 	// simulator metadata
@@ -61,7 +57,7 @@ metadata {
 
 def updated(){
 // Device-Watch simply pings if no device events received for checkInterval duration of 122min = 2 * 60min + 2min lag time
-	sendEvent(name: "checkInterval", value: 2 * 60 * 60 + 2 * 60, displayed: false, data: [protocol: "zwave", hubHardwareId: device.hub.hardwareID])
+	sendEvent(name: "checkInterval", value: 15, displayed: false, data: [protocol: "zwave", hubHardwareId: device.hub.hardwareID])
     response(configure())
 }
 
@@ -93,10 +89,7 @@ def zwaveEvent(physicalgraph.zwave.commands.switchbinaryv1.SwitchBinaryReport cm
 }
 
 def zwaveEvent(physicalgraph.zwave.commands.configurationv1.ConfigurationReport cmd) {
-	def value = "when off"
-	if (cmd.configurationValue[0] == 1) {value = "when on"}
-	if (cmd.configurationValue[0] == 2) {value = "never"}
-	[name: "indicatorStatus", value: value, display: false]
+	log.debug cmd
 }
 
 def zwaveEvent(physicalgraph.zwave.commands.hailv1.Hail cmd) {
@@ -121,6 +114,7 @@ def zwaveEvent(physicalgraph.zwave.commands.associationv2.AssociationReport cmd)
 }
 
 def configure(){
+   sendEvent(name: "checkInterval", value: 15, displayed: false, data: [protocol: "zwave", hubHardwareId: device.hub.hardwareID])
    def cmds = []
    cmds << zwave.configurationV1.configurationSet(parameterNumber: 3, configurationValue: [1]).format()
    cmds << zwave.configurationV1.configurationGet(parameterNumber: 3).format()
@@ -152,6 +146,7 @@ def off() {
 }
 
 def poll() {
+    log.debug "poll()"
 	delayBetween([
 		zwave.switchBinaryV1.switchBinaryGet().format(),
 		zwave.manufacturerSpecificV1.manufacturerSpecificGet().format()
@@ -162,7 +157,10 @@ def poll() {
  * PING is used by Device-Watch in attempt to reach the Device
  * */
 def ping() {
-	refresh()
+    log.debug "ping()"
+	delayBetween([
+		zwave.switchBinaryV1.switchBinaryGet().format()
+	])
 }
 
 def refresh() {
@@ -170,13 +168,4 @@ def refresh() {
 		zwave.switchBinaryV1.switchBinaryGet().format(),
 		zwave.manufacturerSpecificV1.manufacturerSpecificGet().format()
 	])
-}
-
-def invertSwitch(invert=true) {
-	if (invert) {
-		zwave.configurationV1.configurationSet(configurationValue: [1], parameterNumber: 4, size: 1).format()
-	}
-	else {
-		zwave.configurationV1.configurationSet(configurationValue: [0], parameterNumber: 4, size: 1).format()
-	}
 }

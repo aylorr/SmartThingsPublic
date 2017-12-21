@@ -1,7 +1,6 @@
 /**
- *  Note: This handler requires the "Metering Switch Child Device" to be installed.
  *
- *  Copyright 2016 Eric Maycock
+ *  Copyright 2017 Eric Maycock
  *
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -12,30 +11,32 @@
  *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
  *  for the specific language governing permissions and limitations under the License.
  *
- *  Fibaro FGS-223 Dual Relay
+ *  Fibaro Single Switch 2 FGS-213
  *
  *  Author: Eric Maycock (erocm123)
  *  
- *  04/18/2017 - This handler requires the Metering Switch Child device to create the multiple switch endpoints.
  */
  
 metadata {
-definition (name: "Fibaro FGS-223 Dual Relay", namespace: "erocm123", author: "Eric Maycock") {
-capability "Switch"
-capability "Polling"
-capability "Configuration"
-capability "Refresh"
-capability "Zw Multichannel"
-capability "Energy Meter"
-capability "Power Meter"
-capability "Health Check"
-capability "Button"
-capability "Holdable Button"
+    definition (name: "Fibaro Single Switch 2 FGS-213", namespace: "erocm123", author: "Eric Maycock") {
+    capability "Sensor"
+    capability "Actuator"
+    capability "Switch"
+    capability "Polling"
+    capability "Configuration"
+    capability "Refresh"
+    capability "Energy Meter"
+    capability "Power Meter"
+    capability "Health Check"
+    capability "Button"
+    capability "Holdable Button"
 
-command "reset"
+    command "reset"
 
-fingerprint deviceId: "0x1001", inClusters:"0x5E,0x86,0x72,0x59,0x73,0x22,0x56,0x32,0x71,0x98,0x7A,0x25,0x5A,0x85,0x70,0x8E,0x60,0x75,0x5B"
+    fingerprint mfr: "010F", prod: "0403", model: "2000", deviceJoinName: "Fibaro Single Switch 2"
+    fingerprint mfr: "010F", prod: "0403", model: "1000", deviceJoinName: "Fibaro Single Switch 2"
 
+    fingerprint deviceId: "0x1001", inClusters:"0x5E,0x86,0x72,0x59,0x73,0x22,0x56,0x32,0x71,0x98,0x7A,0x25,0x5A,0x85,0x70,0x8E,0x60,0x75,0x5B"
 }
 
 simulator {
@@ -45,20 +46,21 @@ tiles(scale: 2){
 
     multiAttributeTile(name:"switch", type: "lighting", width: 6, height: 4, canChangeIcon: true){
 			tileAttribute ("device.switch", key: "PRIMARY_CONTROL") {
-				attributeState "on", label: '${name}', action: "switch.off", icon: "st.switches.switch.on", backgroundColor: "#00a0dc"
-				attributeState "off", label: '${name}', action: "switch.on", icon: "st.switches.switch.off", backgroundColor: "#ffffff"
+			   attributeState "off", label:'${name}', action:"switch.on", icon:"st.switches.switch.off", backgroundColor:"#ffffff", nextState:"turningOn"
+			   attributeState "on", label:'${name}', action:"switch.off", icon:"st.switches.switch.on", backgroundColor:"#00a0dc", nextState:"turningOff"
+			   attributeState "turningOff", label:'${name}', action:"switch.on", icon:"st.switches.switch.off", backgroundColor:"#ffffff", nextState:"turningOn"
+			   attributeState "turningOn", label:'${name}', action:"switch.off", icon:"st.switches.switch.on", backgroundColor:"#00a0dc", nextState:"turningOff"
 			}
             tileAttribute ("statusText", key: "SECONDARY_CONTROL") {
            		attributeState "statusText", label:'${currentValue}'       		
             }
 	}
-    childDeviceTiles("all")
-	valueTile("power", "device.power", decoration: "flat", width: 2, height: 2) {
+    valueTile("power", "device.power", decoration: "flat", width: 2, height: 2) {
 			state "default", label:'${currentValue} W'
 	}
     valueTile("energy", "device.energy", decoration: "flat", width: 2, height: 2) {
 			state "default", label:'${currentValue} kWh'
-	}
+	}	
     standardTile("refresh", "device.switch", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
 		state "default", label:"", action:"refresh.refresh", icon:"st.secondary.refresh"
     }
@@ -69,6 +71,11 @@ tiles(scale: 2){
     standardTile("reset", "device.energy", inactiveLabel: false, decoration: "flat", width: 2, height: 2) {
 		state "default", label:'reset kWh', action:"reset"
 	}
+    
+    main(["switch"])
+    details(["switch",
+             "power","energy","reset",
+             "refresh","configure"])
 
 }
     preferences {
@@ -82,7 +89,7 @@ def parse(String description) {
     def cmd = zwave.parse(description)
     if (cmd) {
         result += zwaveEvent(cmd)
-        log.debug "Parsed ${cmd} to ${result.inspect()}"
+        //log.debug "Parsed ${cmd} to ${result.inspect()}"
     } else {
         log.debug "Non-parsed event: ${description}"
     }
@@ -107,33 +114,27 @@ def zwaveEvent(physicalgraph.zwave.commands.basicv1.BasicReport cmd)
     log.debug "BasicReport $cmd"
 }
 
-def zwaveEvent(physicalgraph.zwave.commands.basicv1.BasicSet cmd) {
-    log.debug "BasicSet $cmd"
-	sendEvent(name: "switch", value: cmd.value ? "on" : "off", type: "digital")
-    def result = []
-    result << zwave.multiChannelV3.multiChannelCmdEncap(sourceEndPoint:1, destinationEndPoint:1, commandClass:37, command:2)
-    result << zwave.multiChannelV3.multiChannelCmdEncap(sourceEndPoint:1, destinationEndPoint:2, commandClass:37, command:2)
-    response(secureSequence(result, 1000)) // returns the result of reponse()
+def zwaveEvent(physicalgraph.zwave.commands.basicv1.BasicSet cmd, ep=null) {
+    logging("BasicSet: $cmd : Endpoint: $ep")
+    def event
+    if (!ep) {
+        event = [createEvent([name: "switch", value: cmd.value? "on":"off"])]
+    }
+    return event
 }
 
 def zwaveEvent(physicalgraph.zwave.commands.switchbinaryv1.SwitchBinaryReport cmd, ep=null)
 {
-    logging("SwitchBinaryReport ${cmd}")
-    if (ep) {
-        def childDevice = childDevices.find{it.deviceNetworkId == "$device.deviceNetworkId-ep$ep"}
-        if (childDevice)
-            childDevice.sendEvent(name: "switch", value: cmd.value ? "on" : "off")
-    } else {
-        def result = createEvent(name: "switch", value: cmd.value ? "on" : "off", type: "digital")
-        def cmds = []
-        cmds << encap(zwave.switchBinaryV1.switchBinaryGet(), 1)
-        cmds << encap(zwave.switchBinaryV1.switchBinaryGet(), 2)
-        return [result, response(secureSequence(cmds))] // returns the result of reponse()
+    logging("SwitchBinaryReport: $cmd : Endpoint: $ep")
+    def event
+    if (!ep) {
+        event = [createEvent([name: "switch", value: cmd.value? "on":"off"])]
     }
+    return event
 }
 
 def zwaveEvent(physicalgraph.zwave.commands.meterv3.MeterReport cmd, ep=null) {
-    logging("MeterReport $cmd : Endpoint: $ep")
+    logging("MeterReport: $cmd : Endpoint: $ep")
     def result
     def cmds = []
     if (cmd.scale == 0) {
@@ -143,66 +144,15 @@ def zwaveEvent(physicalgraph.zwave.commands.meterv3.MeterReport cmd, ep=null) {
     } else {
        result = [name: "power", value: cmd.scaledMeterValue, unit: "W"]
     }
-    if (ep) {
-       def childDevice = childDevices.find{it.deviceNetworkId == "$device.deviceNetworkId-ep$ep"}
-       if (childDevice)
-          childDevice.sendEvent(result)
-    } else {
-       (1..2).each { endpoint ->
-			cmds << encap(zwave.meterV2.meterGet(scale: 0), endpoint)
-            cmds << encap(zwave.meterV2.meterGet(scale: 2), endpoint)
-	   }
-       if (cmds != []) return [createEvent(result), response(secureSequence(cmds))]
-       else return createEvent(result)
+    if (!ep) {
+       return createEvent(result)
     }
-}
-
-private updateStatus(){
-
-    String statusText = ""
-
-    if(device.currentValue('power') != null)
-        statusText = "${device.currentValue('power')} W - "
-    
-    if(device.currentValue('energy') != null)
-        statusText = statusText + "${device.currentValue('energy')} kWh - "
-        
-    if (statusText != ""){
-        statusText = statusText.substring(0, statusText.length() - 2)
-        sendEvent(name:"statusText", value: statusText, displayed:false)
-    }
-}
-
-def zwaveEvent(physicalgraph.zwave.commands.multichannelv3.MultiChannelCapabilityReport cmd) 
-{
-    log.debug "multichannelv3.MultiChannelCapabilityReport $cmd"
-    if (cmd.endPoint == 2 ) {
-        def currstate = device.currentState("switch2").getValue()
-        if (currstate == "on")
-        	sendEvent(name: "switch2", value: "off", isStateChange: true, display: false)
-        else if (currstate == "off")
-        	sendEvent(name: "switch2", value: "on", isStateChange: true, display: false)
-    }
-    else if (cmd.endPoint == 1 ) {
-        def currstate = device.currentState("switch1").getValue()
-        if (currstate == "on")
-        sendEvent(name: "switch1", value: "off", isStateChange: true, display: false)
-        else if (currstate == "off")
-        sendEvent(name: "switch1", value: "on", isStateChange: true, display: false)
-    }
-}
-
-def zwaveEvent(physicalgraph.zwave.commands.multichannelv3.MultiChannelCmdEncap cmd) {
-   logging("MultiChannelCmdEncap ${cmd}")
-   def encapsulatedCommand = cmd.encapsulatedCommand([0x32: 3, 0x25: 1, 0x20: 1])
-   if (encapsulatedCommand) {
-		zwaveEvent(encapsulatedCommand, cmd.sourceEndPoint as Integer)
-   }
 }
 
 def zwaveEvent(physicalgraph.zwave.commands.associationv2.AssociationReport cmd) {
 	log.debug "AssociationReport $cmd"
-    state."association${cmd.groupingIdentifier}" = cmd.nodeId[0]
+    if (zwaveHubNodeId in cmd.nodeId) state."association${cmd.groupingIdentifier}" = true
+    else state."association${cmd.groupingIdentifier}" = false
 }
 
 def zwaveEvent(physicalgraph.zwave.Command cmd) {
@@ -212,10 +162,6 @@ def zwaveEvent(physicalgraph.zwave.Command cmd) {
     return createEvent(descriptionText: "${device.displayName}: ${cmd}")
 }
 
-def zwaveEvent(physicalgraph.zwave.commands.switchallv1.SwitchAllReport cmd) {
-   log.debug "SwitchAllReport $cmd"
-}
-
 def zwaveEvent(physicalgraph.zwave.commands.configurationv2.ConfigurationReport cmd) {
      update_current_properties(cmd)
      logging("${device.displayName} parameter '${cmd.parameterNumber}' with a byte size of '${cmd.size}' is set to '${cmd2Integer(cmd.configurationValue)}'")
@@ -223,22 +169,27 @@ def zwaveEvent(physicalgraph.zwave.commands.configurationv2.ConfigurationReport 
 
 def refresh() {
 	def cmds = []
+    cmds << zwave.associationV2.associationGet(groupingIdentifier:1)
+    cmds << zwave.associationV2.associationGet(groupingIdentifier:2)
+    cmds << zwave.associationV2.associationGet(groupingIdentifier:3)
+    cmds << zwave.associationV2.associationGet(groupingIdentifier:4)
+    cmds << zwave.associationV2.associationGet(groupingIdentifier:5)
     cmds << zwave.switchBinaryV1.switchBinaryGet()
     cmds << zwave.meterV2.meterGet(scale: 0)
     cmds << zwave.meterV2.meterGet(scale: 2)
-    (1..2).each { endpoint ->
-            cmds << encap(zwave.switchBinaryV1.switchBinaryGet(), endpoint)
-			cmds << encap(zwave.meterV2.meterGet(scale: 0), endpoint)
-            cmds << encap(zwave.meterV2.meterGet(scale: 2), endpoint)
-	}
+	secureSequence(cmds, 1000)
+}
+
+def reset() {
+	def cmds = []
+    cmds << zwave.meterV2.meterReset()
+    cmds << zwave.meterV2.meterGet(scale: 0)
+    cmds << zwave.meterV2.meterGet(scale: 2)
 	secureSequence(cmds, 1000)
 }
 
 def ping() {
-	def cmds = []
-	cmds << zwave.multiChannelV3.multiChannelCmdEncap(sourceEndPoint:1, destinationEndPoint:1, commandClass:37, command:2)
-    cmds << zwave.multiChannelV3.multiChannelCmdEncap(sourceEndPoint:1, destinationEndPoint:2, commandClass:37, command:2)
-	secureSequence(cmds, 1000)
+	refresh()
 }
 
 def zwaveEvent(physicalgraph.zwave.commands.manufacturerspecificv2.ManufacturerSpecificReport cmd) {
@@ -248,10 +199,7 @@ def zwaveEvent(physicalgraph.zwave.commands.manufacturerspecificv2.ManufacturerS
 }
 
 def poll() {
-	def cmds = []
-	cmds << zwave.multiChannelV3.multiChannelCmdEncap(sourceEndPoint:1, destinationEndPoint:1, commandClass:37, command:2)
-    cmds << zwave.multiChannelV3.multiChannelCmdEncap(sourceEndPoint:1, destinationEndPoint:2, commandClass:37, command:2)
-	secureSequence(cmds, 1000)
+	refresh()
 }
 
 def configure() {
@@ -286,18 +234,6 @@ def updated()
 {
 	state.enableDebugging = settings.enableDebugging
     logging("updated() is being called")
-    if (!childDevices) {
-		createChildDevices()
-	}
-	else if (device.label != state.oldLabel) {
-		childDevices.each {
-            if (it.label == "${state.oldLabel} (S${channelNumber(it.deviceNetworkId)})") {
-			    def newLabel = "${device.displayName} (S${channelNumber(it.deviceNetworkId)})"
-			    it.setLabel(newLabel)
-            }
-		}
-		state.oldLabel = device.label
-	}
     sendEvent(name: "checkInterval", value: 2 * 30 * 60 + 2 * 60, displayed: false, data: [protocol: "zwave", hubHardwareId: device.hub.hardwareID])
     def cmds = update_needed_settings()
     
@@ -308,51 +244,20 @@ def updated()
 
 def on() { 
    secureSequence([
-        zwave.multiChannelV3.multiChannelCmdEncap(sourceEndPoint:1, destinationEndPoint:1, commandClass:37, command:1, parameter:[255]),
-        zwave.multiChannelV3.multiChannelCmdEncap(sourceEndPoint:2, destinationEndPoint:2, commandClass:37, command:1, parameter:[255]),
-        zwave.multiChannelV3.multiChannelCmdEncap(sourceEndPoint:1, destinationEndPoint:1, commandClass:37, command:2),
-        zwave.multiChannelV3.multiChannelCmdEncap(sourceEndPoint:2, destinationEndPoint:2, commandClass:37, command:2)
-    ], 1000)
+        zwave.basicV1.basicSet(value: 0xFF)
+    ])
 }
 def off() {
    secureSequence([
-        zwave.multiChannelV3.multiChannelCmdEncap(sourceEndPoint:1, destinationEndPoint:1, commandClass:37, command:1, parameter:[0]),
-        zwave.multiChannelV3.multiChannelCmdEncap(sourceEndPoint:2, destinationEndPoint:2, commandClass:37, command:1, parameter:[0]),
-        zwave.multiChannelV3.multiChannelCmdEncap(sourceEndPoint:1, destinationEndPoint:1, commandClass:37, command:2),
-        zwave.multiChannelV3.multiChannelCmdEncap(sourceEndPoint:2, destinationEndPoint:2, commandClass:37, command:2)
-    ], 1000)
-}
-
-void childOn(String dni) {
-    logging("childOn($dni)")
-    def cmds = []
-    cmds << new physicalgraph.device.HubAction(secure(encap(zwave.basicV1.basicSet(value: 0xFF), channelNumber(dni))))
-    cmds << new physicalgraph.device.HubAction(secure(encap(zwave.switchBinaryV1.switchBinaryGet(), channelNumber(dni))))
-	sendHubCommand(cmds)
-}
-
-void childOff(String dni) {
-    logging("childOff($dni)")
-	def cmds = []
-    cmds << new physicalgraph.device.HubAction(secure(encap(zwave.basicV1.basicSet(value: 0x00), channelNumber(dni))))
-    cmds << new physicalgraph.device.HubAction(secure(encap(zwave.switchBinaryV1.switchBinaryGet(), channelNumber(dni))))
-	sendHubCommand(cmds)
-}
-
-void childRefresh(String dni) {
-    logging("childRefresh($dni)")
-	def cmds = []
-    cmds << new physicalgraph.device.HubAction(secure(encap(zwave.switchBinaryV1.switchBinaryGet(), channelNumber(dni))))
-    cmds << new physicalgraph.device.HubAction(secure(encap(zwave.meterV2.meterGet(scale: 0), channelNumber(dni))))
-    cmds << new physicalgraph.device.HubAction(secure(encap(zwave.meterV2.meterGet(scale: 2), channelNumber(dni))))
-	sendHubCommand(cmds)
+        zwave.basicV1.basicSet(value: 0x00)
+    ])
 }
 
 private secure(physicalgraph.zwave.Command cmd) {
 	zwave.securityV1.securityMessageEncapsulation().encapsulate(cmd).format()
 }
 
-private secureSequence(commands, delay=200) {
+private secureSequence(commands, delay=1500) {
 	delayBetween(commands.collect{ secure(it) }, delay)
 }
 
@@ -365,7 +270,7 @@ private encap(cmd, endpoint) {
 }
 
 def zwaveEvent(physicalgraph.zwave.commands.securityv1.SecurityMessageEncapsulation cmd) {
-	def encapsulatedCommand = cmd.encapsulatedCommand([0x20: 1, 0x32: 1, 0x25: 1, 0x98: 1, 0x70: 2, 0x85: 2, 0x9B: 1, 0x90: 1, 0x73: 1, 0x30: 1, 0x28: 1, 0x2B: 1]) // can specify command class versions here like in zwave.parse
+	def encapsulatedCommand = cmd.encapsulatedCommand([0x20: 1, 0x32: 3, 0x25: 1, 0x98: 1, 0x70: 2, 0x85: 2, 0x9B: 1, 0x90: 1, 0x73: 1, 0x30: 1, 0x28: 1, 0x2B: 1]) // can specify command class versions here like in zwave.parse
 	if (encapsulatedCommand) {
 		return zwaveEvent(encapsulatedCommand)
 	} else {
@@ -450,13 +355,14 @@ def update_needed_settings()
     def configuration = parseXml(configuration_model())
     def isUpdateNeeded = "NO"
     
-    sendEvent(name:"numberOfButtons", value:"5")
-    
-    if(!state.association4 || state.association4 == "" || state.association4 == "1"){
-       logging("Setting association group 4")
-       cmds << zwave.associationV2.associationSet(groupingIdentifier:4, nodeId:zwaveHubNodeId)
-       cmds << zwave.associationV2.associationGet(groupingIdentifier:4)
+    if(!state.association1){
+       logging("Setting association group 1")
+       cmds << zwave.associationV2.associationRemove(groupingIdentifier: 1, nodeId: [])
+       cmds << zwave.associationV2.associationSet(groupingIdentifier:1, nodeId:zwaveHubNodeId)
+       cmds << zwave.associationV2.associationGet(groupingIdentifier:1)
     }
+    
+    sendEvent(name:"numberOfButtons", value:"5")
     
     configuration.Value.each
     {     
@@ -579,33 +485,6 @@ def zwaveEvent(physicalgraph.zwave.commands.crc16encapv1.Crc16Encap cmd) {
 	}
 }
 
-private channelNumber(String dni) {
-	dni.split("-ep")[-1] as Integer
-}
-
-private void createChildDevices() {
-	state.oldLabel = device.label
-     try {
-        for (i in 1..2) {
-	       addChildDevice("Metering Switch Child Device", "${device.deviceNetworkId}-ep${i}", null,
-		      [completedSetup: true, label: "${device.displayName} (S${i})",
-		      isComponent: false, componentName: "ep$i", componentLabel: "Switch $i"])
-        }
-    } catch (e) {
-	    runIn(2, "sendAlert")
-    }
-}
-
-private sendAlert() {
-   sendEvent(
-      descriptionText: "Child device creation failed. Please make sure that the \"Metering Switch Child Device\" is installed and published.",
-	  eventType: "ALERT",
-	  name: "childDeviceCreation",
-	  value: "failed",
-	  displayed: true,
-   )
-}
-
 def configuration_model()
 {
 '''
@@ -658,43 +537,6 @@ Range: 1~32000 (0.1s-3200.0s)
 Default: 5 (0.5s)
     </Help>
   </Value>
-        <Value type="list" byteSize="1" index="15" label="Second Channel - Operating Mode" min="0" max="5" value="0" setting_type="zwave" fw="">
-    <Help>
-This parameter allows you to choose the operating mode for the 2nd channel controlled by the S2 switch.
-Range: 0~5
-Default: 0 (Standard)
-    </Help>
-        <Item label="Standard" value="0" />
-        <Item label="Delay On" value="1" />
-        <Item label="Delay Off" value="2" />
-        <Item label="Auto On" value="3" />
-        <Item label="Auto Off" value="4" />
-        <Item label="Flashing" value="5" />
-  </Value>
-        <Value type="list" byteSize="1" index="16" label="Second Channel - Reaction For Delay/Auto" min="0" max="2" value="0" setting_type="zwave" fw="">
-    <Help>
-This parameter determines how the device in timed mode reacts to pushing the switch connected to the S2 terminal.
-Range: 0~2
-Default: 0 (Cancel)
-    </Help>
-        <Item label="Cancel" value="0" />
-        <Item label="No Reaction" value="1" />
-        <Item label="Reset" value="2" />
-  </Value>
-      <Value type="byte" byteSize="2" index="17" label="Second Channel - Time Parameter for Delay/Auto" min="0" max="32000" value="50" setting_type="zwave" fw="">
-    <Help>
-This parameter allows to set time parameter used in timed modes. 
-Range: 0~32000 (0.1s, 1-32000s)
-Default: 50
-    </Help>
-  </Value>
-      <Value type="byte" byteSize="2" index="18" label="Second Channel - Pulse Time For Flashing" min="1" max="32000" value="5" setting_type="zwave" fw="">
-    <Help>
-This parameter allows to set time of switching to opposite state in flashing mode.
-Range: 1~32000 (0.1s-3200.0s)
-Default: 5 (0.5s)
-    </Help>
-  </Value>
     <Value type="list" byteSize="1" index="20" label="Switch type" min="0" max="2" value="2" setting_type="zwave" fw="">
     <Help>
 Choose between momentary and toggle switch.
@@ -720,27 +562,6 @@ Default: 10
     </Help>
   </Value>
     <Value type="short" byteSize="2" index="53" label="First Channel - Energy reports" min="0" max="32000" value="100" setting_type="zwave" fw="">
-    <Help>
-Energy level change which will result in sending a new energy report.
-Range: 0~32000 (0.01-320 kWh)
-Default: 100
-    </Help>
-  </Value>
-      <Value type="byte" byteSize="1" index="54" label="Second Channel - Active power reports" min="0" max="100" value="10" setting_type="zwave" fw="">
-    <Help>
-The parameter defines the power level change that will result in a new power report being sent. The value is a percentage of the previous report.
-Range: 0~100 (1-100%)
-Default: 10
-    </Help>
-  </Value>
-    <Value type="byte" byteSize="1" index="55" label="Second Channel - Periodic active power and energy reports" min="0" max="120" value="10" setting_type="zwave" fw="">
-    <Help>
-Parameter 55 defines a time period between consecutive reports. Timer is reset and counted from zero after each report. 
-Range: 0~120 (1-120s)
-Default: 10
-    </Help>
-  </Value>
-    <Value type="short" byteSize="2" index="57" label="Second Channel - Energy reports" min="0" max="32000" value="100" setting_type="zwave" fw="">
     <Help>
 Energy level change which will result in sending a new energy report.
 Range: 0~32000 (0.01-320 kWh)
